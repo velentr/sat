@@ -46,12 +46,12 @@ static void unwind(struct cnf *cnf, unsigned mark)
 		c = cnf->clauses[i];
 		assert(c != NULL);
 
-		if (c->mark != mark)
-			continue;
-
-		cnf->clauses[i] = c->next;
-		pset_refdown(c->literals);
-		free(c);
+		while (c != NULL && c->mark >= mark) {
+			cnf->clauses[i] = c->next;
+			pset_refdown(c->literals);
+			free(c);
+			c = cnf->clauses[i];
+		}
 	}
 }
 
@@ -139,10 +139,8 @@ static int sat(struct cnf *cnf, unsigned mark)
 	cnf->t = l;
 
 	if (try_set(cnf, mark, l->name)) {
-		if (sat(cnf, mark + 1)) {
-			unwind(cnf, mark);
+		if (sat(cnf, mark + 1))
 			return 1;
-		}
 	}
 	assert(cnf->t == l);
 	cnf->t = l->next;
@@ -153,10 +151,8 @@ static int sat(struct cnf *cnf, unsigned mark)
 	cnf->f = l;
 
 	if (try_set(cnf, mark, -l->name)) {
-		if (sat(cnf, mark + 1)) {
-			unwind(cnf, mark);
+		if (sat(cnf, mark + 1))
 			return 1;
-		}
 	}
 	assert(cnf->f == l);
 	cnf->f = l->next;
