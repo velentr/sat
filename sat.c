@@ -269,6 +269,15 @@ static struct cnf *dimacs(FILE *f)
 	return result;
 }
 
+static void print_list(const struct literal *l)
+{
+	const struct literal *i;
+
+	for (i = l; i != NULL; i = i->next) {
+		printf("  %d\n", i->name);
+	}
+}
+
 int main()
 {
 	struct literal *l;
@@ -280,7 +289,19 @@ int main()
 
 	issat = sat(cnf, 1);
 	if (issat) {
-		printf("satisfied!\n");
+		printf("satisfied!\n\n");
+		if (cnf->t != NULL) {
+			printf("true:\n");
+			print_list(cnf->t);
+		}
+		if (cnf->f != NULL) {
+			printf("false:\n");
+			print_list(cnf->f);
+		}
+		if (cnf->z != NULL) {
+			printf("don't care:\n");
+			print_list(cnf->z);
+		}
 		rc = EXIT_SUCCESS;
 	} else {
 		assert(cnf->f == NULL);
