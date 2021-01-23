@@ -6,15 +6,9 @@
 
 #include "pset.h"
 
-struct count {
-	int literal;
-	unsigned count;
-};
-
 struct literal {
 	struct literal *next;
 	unsigned mark;
-	unsigned count;
 	int name;
 };
 
@@ -26,7 +20,7 @@ struct clause {
 };
 
 struct cnf {
-	struct count *counts;
+	struct literal *lbuf;
 	struct literal *z;
 	struct literal *t;
 	struct literal *f;
@@ -167,10 +161,8 @@ static int sat(struct cnf *cnf, unsigned mark)
 static struct cnf *dimacs_header(FILE *f)
 {
 	struct cnf *result;
-	struct count *counts;
 	unsigned nvars, nclauses;
 	int rc;
-	unsigned i;
 
 	rc = fscanf(f, " p cnf %u %u ", &nvars, &nclauses);
 	if (rc != 2)
@@ -183,18 +175,10 @@ static struct cnf *dimacs_header(FILE *f)
 	result->nvars = nvars;
 	result->nclauses = nclauses;
 
-	counts = calloc(nvars + 1, sizeof(*counts));
-	if (counts == NULL)
-		err(EXIT_FAILURE, "malloc: counts");
-
-	for (i = 0; i <= nvars; i++)
-		counts[i].literal = i;
-	result->counts = counts;
-
 	return result;
 }
 
-static struct clause *dimacs_clause(FILE *f, struct count *counts)
+static struct clause *dimacs_clause(FILE *f)
 {
 	struct clause *result;
 
@@ -214,22 +198,9 @@ static struct clause *dimacs_clause(FILE *f, struct count *counts)
 			break;
 
 		result->literals = pset_insert(result->literals, literal);
-
-		if (literal < 0)
-			counts[-literal].count++;
-		else
-			counts[literal].count++;
 	}
 
 	return result;
-}
-
-static int count_cmp(const void *_a, const void *_b)
-{
-	const struct count *a = _a;
-	const struct count *b = _b;
-
-	return a->count - b->count;
 }
 
 static struct cnf *dimacs(FILE *f)
@@ -240,25 +211,17 @@ static struct cnf *dimacs(FILE *f)
 	result = dimacs_header(f);
 
 	for (i = 0; i < result->nclauses; i++)
-		result->clauses[i] = dimacs_clause(f, result->counts);
+		result->clauses[i] = dimacs_clause(f);
 
-	qsort(result->counts, result->nvars + 1, sizeof(struct count),
-	      count_cmp);
+	result->lbuf = calloc(result->nvars, sizeof(*result->lbuf));
+	if (result->lbuf == NULL)
+		err(EXIT_FAILURE, "calloc: lbuf");
 
-	for (i = 0; i <= result->nvars; i++) {
-		struct literal *l;
-
-		if (result->counts[i].literal == 0)
-			continue;
-
-		l = malloc(sizeof(*l));
-		if (l == NULL)
-			err(EXIT_FAILURE, "malloc: literal");
-
+	for (i = 0; i < result->nvars; i++) {
+		struct literal *l = result->lbuf + i;
 		l->next = result->z;
 		l->mark = 0;
-		l->name = result->counts[i].literal;
-		l->count = result->counts[i].count;
+		l->name = i + 1;
 		result->z = l;
 	}
 
@@ -276,7 +239,6 @@ static void print_list(const struct literal *l)
 
 int main()
 {
-	struct literal *l;
 	struct cnf *cnf;
 	int issat;
 	int rc;
@@ -308,23 +270,7 @@ int main()
 
 	unwind(cnf, 0);
 
-	for (l = cnf->z; l != NULL;) {
-		struct literal *f = l;
-		l = l->next;
-		free(f);
-	}
-	for (l = cnf->t; l != NULL;) {
-		struct literal *f = l;
-		l = l->next;
-		free(f);
-	}
-	for (l = cnf->f; l != NULL;) {
-		struct literal *f = l;
-		l = l->next;
-		free(f);
-	}
-
-	free(cnf->counts);
+	free(cnf->lbuf);
 	free(cnf);
 
 	return rc;
