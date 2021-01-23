@@ -236,13 +236,33 @@ static void print_list(const struct literal *l)
 	}
 }
 
-int main()
+static void usage(const char *prog)
+{
+	fprintf(stderr, "usage: %s [cnf file]\n", prog);
+}
+
+int main(int argc, const char * const argv[])
 {
 	struct cnf *cnf;
+	FILE *in;
 	int issat;
 	int rc;
 
-	cnf = dimacs(stdin);
+	if (argc == 1) {
+		in = stdin;
+	} else if (argc == 2) {
+		in = fopen(argv[1], "r");
+		if (in == NULL)
+			err(EXIT_FAILURE, "fopen: %s", argv[1]);
+	} else {
+		usage(argv[0]);
+		return EXIT_FAILURE;
+	}
+
+	cnf = dimacs(in);
+
+	if (argc == 2)
+		fclose(in);
 
 	issat = sat(cnf, 1);
 	if (issat) {
