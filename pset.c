@@ -82,7 +82,9 @@ static struct pset *pset_delete(struct pset *pset)
 		res->ref = 1;
 		res->val = val;
 
-		assert(res->cnt == res->left->cnt + res->right->cnt + 1);
+		assert(res->right != NULL);
+		assert((res->left == NULL && res->cnt == res->right->cnt + 1)
+		       || (res->cnt == res->left->cnt + res->right->cnt + 1));
 	} else {
 		unsigned val;
 
@@ -94,7 +96,9 @@ static struct pset *pset_delete(struct pset *pset)
 		res->ref = 1;
 		res->val = val;
 
-		assert(res->cnt == res->left->cnt + res->right->cnt + 1);
+		assert(res->left != NULL);
+		assert((res->right == NULL && res->cnt == res->left->cnt + 1)
+		       || (res->cnt == res->left->cnt + res->right->cnt + 1));
 	}
 
 	return res;
