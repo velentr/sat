@@ -150,7 +150,6 @@ static int sat(struct cnf *cnf, unsigned mark)
 	}
 	assert(cnf->f == l);
 	cnf->f = l->next;
-	unwind(cnf, mark);
 
 	l->next = cnf->z;
 	cnf->z = l;
