@@ -47,6 +47,20 @@ static void unwind(struct cnf *cnf, unsigned mark)
 			c = cnf->clauses[i];
 		}
 	}
+
+	while (cnf->f != NULL && cnf->f->mark >= mark) {
+		struct literal *f = cnf->f->next;
+		cnf->f->next = cnf->z;
+		cnf->z = cnf->f;
+		cnf->f = f;
+	}
+
+	while (cnf->t != NULL && cnf->t->mark >= mark) {
+		struct literal *t = cnf->t->next;
+		cnf->t->next = cnf->z;
+		cnf->z = cnf->t;
+		cnf->t = t;
+	}
 }
 
 static int satisfied(const struct cnf *cnf)
@@ -114,14 +128,94 @@ static int try_set(struct cnf *cnf, unsigned mark, int l)
 	return 1;
 }
 
+static struct literal *remove_zliteral(struct cnf *cnf, int v)
+{
+	struct literal **l;
+	struct literal *res;
+
+	assert(cnf->z != NULL);
+	assert(v >= 0);
+
+	for (l = &cnf->z; *l != NULL; l = &((*l)->next)) {
+		if ((*l)->name != v)
+			continue;
+
+		res = *l;
+		*l = res->next;
+		return res;
+	}
+
+	/* couldn't find literal? */
+	assert(0);
+	return NULL;
+}
+
+static int unit_propagate(struct cnf *cnf, unsigned mark)
+{
+	size_t i;
+
+	for (i = 0; i < cnf->nclauses; i++) {
+		struct clause *c = cnf->clauses[i];
+		int success;
+
+		assert(c != NULL);
+		/* if literals is NULL, then the clause is already unsat */
+		assert(c->literals != NULL);
+
+		if (c->sat || c->literals->cnt != 1)
+			continue;
+
+		success = try_set(cnf, mark, c->literals->val);
+		if (!success)
+			return 0;
+
+		if (c->literals->val < 0) {
+			struct literal *f;
+
+			f = remove_zliteral(cnf, -c->literals->val);
+
+			assert(f != NULL);
+			assert(f->name == -c->literals->val);
+
+			f->mark = mark;
+			f->next = cnf->f;
+			cnf->f = f;
+		} else {
+			struct literal *t;
+
+			t = remove_zliteral(cnf, c->literals->val);
+
+			assert(t != NULL);
+			assert(t->name == c->literals->val);
+
+			t->mark = mark;
+			t->next = cnf->t;
+			cnf->t = t;
+		}
+	}
+
+	return 1;
+}
+
 static int sat(struct cnf *cnf, unsigned mark)
 {
 	struct literal *l;
+	struct literal *_l;
 
 	if (satisfied(cnf))
 		return 1;
 	else if (cnf->z == NULL)
 		return 0;
+
+	if (!unit_propagate(cnf, mark))
+		return 0;
+
+	/*
+	 * we don't want to unwind unit propagation or pure literal elimination
+	 * until this stack frame fails, so use a higher mark for the logic
+	 * below
+	 */
+	mark++;
 
 	l = cnf->z;
 	cnf->z = l->next;
@@ -136,11 +230,12 @@ static int sat(struct cnf *cnf, unsigned mark)
 		if (sat(cnf, mark + 1))
 			return 1;
 	}
-	assert(cnf->t == l);
-	cnf->t = l->next;
 	unwind(cnf, mark);
+	_l = remove_zliteral(cnf, l->name);
+	assert(_l == l);
 
 	/* next, try setting to 'false' */
+	l->mark = mark;
 	l->next = cnf->f;
 	cnf->f = l;
 
@@ -148,11 +243,6 @@ static int sat(struct cnf *cnf, unsigned mark)
 		if (sat(cnf, mark + 1))
 			return 1;
 	}
-	assert(cnf->f == l);
-	cnf->f = l->next;
-
-	l->next = cnf->z;
-	cnf->z = l;
 
 	return 0;
 }
