@@ -197,17 +197,72 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 	return 1;
 }
 
+static int is_pure_literal(struct cnf *cnf, int val)
+{
+	size_t i;
+
+	for (i = 0; i < cnf->nclauses; i++) {
+		assert(cnf->clauses[i] != NULL);
+		if (cnf->clauses[i]->sat)
+			continue;
+
+		if (pset_contains(cnf->clauses[i]->literals, -val))
+			return 0;
+	}
+
+	return 1;
+}
+
+static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
+{
+	struct literal **z;
+	struct literal **next;
+
+	for (z = &cnf->z, next = z; *next != NULL; z = next) {
+		next = &(*z)->next;
+		if (is_pure_literal(cnf, (*z)->name)) {
+			struct literal *t;
+
+			if (!try_set(cnf, mark, (*z)->name))
+				return 0;
+
+			t = *z;
+			*z = t->next;
+			next = z;
+			t->next = cnf->t;
+			t->mark = mark;
+			cnf->t = t;
+		} else if (is_pure_literal(cnf, -(*z)->name)) {
+			struct literal *f;
+
+			if (!try_set(cnf, mark, -(*z)->name))
+				return 0;
+
+			f = *z;
+			*z = f->next;
+			next = z;
+			f->next = cnf->f;
+			f->mark = mark;
+			cnf->f = f;
+		}
+	}
+
+	return 1;
+}
+
 static int sat(struct cnf *cnf, unsigned mark)
 {
 	struct literal *l;
 	struct literal *_l;
 
+	if (!unit_propagate(cnf, mark))
+		return 0;
+	if (!eliminate_pure_literals(cnf, mark))
+		return 0;
+
 	if (satisfied(cnf))
 		return 1;
 	else if (cnf->z == NULL)
-		return 0;
-
-	if (!unit_propagate(cnf, mark))
 		return 0;
 
 	/*
