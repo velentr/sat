@@ -1,5 +1,7 @@
 *.test
+*.out
 *.debug
 *.release
+*.profile
 *.bz2
 .*

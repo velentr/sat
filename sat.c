@@ -1,10 +1,14 @@
+#define _POSIX_C_SOURCE 199309L
 #include <assert.h>
 #include <err.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #include "pset.h"
+
+#define UNUSED(x) (void)(x)
 
 struct literal {
 	struct literal *next;
@@ -386,12 +390,24 @@ static void usage(const char *prog)
 	fprintf(stderr, "usage: %s [cnf file]\n", prog);
 }
 
+static void handle(int sig)
+{
+	UNUSED(sig);
+	exit(EXIT_FAILURE);
+}
+
 int main(int argc, const char * const argv[])
 {
+	struct sigaction sa;
 	struct cnf *cnf;
 	FILE *in;
 	int issat;
 	int rc;
+
+	sa.sa_handler = handle;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGINT, &sa, NULL);
 
 	if (argc == 1) {
 		in = stdin;
