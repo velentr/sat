@@ -12,6 +12,8 @@
 
 struct literal {
 	struct literal *next;
+	size_t *clauses;
+	size_t nclauses;
 	unsigned mark;
 	int name;
 };
@@ -201,16 +203,17 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 	return 1;
 }
 
-static int is_pure_literal(struct cnf *cnf, int val)
+static int is_pure_literal(struct cnf *cnf, struct literal *l, int val)
 {
 	size_t i;
 
-	for (i = 0; i < cnf->nclauses; i++) {
-		assert(cnf->clauses[i] != NULL);
-		if (cnf->clauses[i]->sat)
+	for (i = 0; i < l->nclauses; i++) {
+		size_t c = l->clauses[i];
+		assert(cnf->clauses[c] != NULL);
+		if (cnf->clauses[c]->sat)
 			continue;
 
-		if (pset_contains(cnf->clauses[i]->literals, -val))
+		if (pset_contains(cnf->clauses[c]->literals, -val))
 			return 0;
 	}
 
@@ -224,7 +227,7 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 
 	for (z = &cnf->z, next = z; *next != NULL; z = next) {
 		next = &(*z)->next;
-		if (is_pure_literal(cnf, (*z)->name)) {
+		if (is_pure_literal(cnf, *z, (*z)->name)) {
 			struct literal *t;
 
 			if (!try_set(cnf, mark, (*z)->name))
@@ -236,7 +239,7 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 			t->next = cnf->t;
 			t->mark = mark;
 			cnf->t = t;
-		} else if (is_pure_literal(cnf, -(*z)->name)) {
+		} else if (is_pure_literal(cnf, *z, -(*z)->name)) {
 			struct literal *f;
 
 			if (!try_set(cnf, mark, -(*z)->name))
@@ -326,7 +329,19 @@ static struct cnf *dimacs_header(FILE *f)
 	return result;
 }
 
-static struct clause *dimacs_clause(FILE *f)
+static void append_clause(struct literal *l, size_t c)
+{
+	size_t *clauses;
+
+	clauses = realloc(l->clauses, (l->nclauses + 1) * sizeof(size_t));
+	if (clauses == NULL)
+		err(EXIT_FAILURE, "realloc: clauses");
+	l->clauses = clauses;
+	l->clauses[l->nclauses] = c;
+	l->nclauses++;
+}
+
+static struct clause *dimacs_clause(FILE *f, struct cnf *cnf, size_t c)
 {
 	struct clause *result;
 
@@ -346,6 +361,10 @@ static struct clause *dimacs_clause(FILE *f)
 			break;
 
 		result->literals = pset_insert(result->literals, literal);
+		if (literal < 0)
+			append_clause(&cnf->lbuf[-literal - 1], c);
+		else
+			append_clause(&cnf->lbuf[literal - 1], c);
 	}
 
 	return result;
@@ -358,9 +377,6 @@ static struct cnf *dimacs(FILE *f)
 
 	result = dimacs_header(f);
 
-	for (i = 0; i < result->nclauses; i++)
-		result->clauses[i] = dimacs_clause(f);
-
 	result->lbuf = calloc(result->nvars, sizeof(*result->lbuf));
 	if (result->lbuf == NULL)
 		err(EXIT_FAILURE, "calloc: lbuf");
@@ -372,6 +388,9 @@ static struct cnf *dimacs(FILE *f)
 		l->name = i + 1;
 		result->z = l;
 	}
+
+	for (i = 0; i < result->nclauses; i++)
+		result->clauses[i] = dimacs_clause(f, result, i);
 
 	return result;
 }
@@ -401,6 +420,7 @@ int main(int argc, const char * const argv[])
 	struct sigaction sa;
 	struct cnf *cnf;
 	FILE *in;
+	size_t i;
 	int issat;
 	int rc;
 
@@ -450,6 +470,8 @@ int main(int argc, const char * const argv[])
 
 	unwind(cnf, 0);
 
+	for (i = 0; i < cnf->nvars; i++)
+		free(cnf->lbuf[i].clauses);
 	free(cnf->lbuf);
 	free(cnf);
 
