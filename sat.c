@@ -82,20 +82,20 @@ static int satisfied(const struct cnf *cnf)
 	return 1;
 }
 
-static int try_set(struct cnf *cnf, unsigned mark, int l)
+static int try_set(struct cnf *cnf, unsigned mark, struct literal *l, int name)
 {
 	size_t i;
 
-	for (i = 0; i < cnf->nclauses; i++) {
+	for (i = 0; i < l->nclauses; i++) {
 		struct clause *c;
 
-		c = cnf->clauses[i];
+		c = cnf->clauses[l->clauses[i]];
 		assert(c != NULL);
 
 		if (c->sat)
 			continue;
 
-		if (pset_contains(c->literals, l)) {
+		if (pset_contains(c->literals, name)) {
 			/* the clause is satisfied */
 			struct clause *n;
 
@@ -108,13 +108,13 @@ static int try_set(struct cnf *cnf, unsigned mark, int l)
 			pset_refup(c->literals);
 			n->mark = mark;
 			n->sat = 1;
-			cnf->clauses[i] = n;
-		} else if (pset_contains(c->literals, -l)) {
-			/* another literal in the clause in not satisfied */
+			cnf->clauses[l->clauses[i]] = n;
+		} else if (pset_contains(c->literals, -name)) {
+			/* another literal in the clause is not satisfied */
 			struct pset *p;
 			struct clause *n;
 
-			p = pset_remove(c->literals, -l);
+			p = pset_remove(c->literals, -name);
 			/* c is unsatisfiable */
 			if (p == NULL)
 				return 0;
@@ -127,7 +127,7 @@ static int try_set(struct cnf *cnf, unsigned mark, int l)
 			n->literals = p;
 			n->mark = mark;
 			n->sat = 0;
-			cnf->clauses[i] = n;
+			cnf->clauses[l->clauses[i]] = n;
 		}
 	}
 
@@ -162,6 +162,7 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 
 	for (i = 0; i < cnf->nclauses; i++) {
 		struct clause *c = cnf->clauses[i];
+		struct literal *l;
 		int success;
 
 		assert(c != NULL);
@@ -171,7 +172,11 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 		if (c->sat || c->literals->cnt != 1)
 			continue;
 
-		success = try_set(cnf, mark, c->literals->val);
+		if (c->literals->val < 0)
+			l = &cnf->lbuf[-c->literals->val - 1];
+		else
+			l = &cnf->lbuf[c->literals->val - 1];
+		success = try_set(cnf, mark, l, c->literals->val);
 		if (!success)
 			return 0;
 
@@ -230,7 +235,7 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 		if (is_pure_literal(cnf, *z, (*z)->name)) {
 			struct literal *t;
 
-			if (!try_set(cnf, mark, (*z)->name))
+			if (!try_set(cnf, mark, *z, (*z)->name))
 				return 0;
 
 			t = *z;
@@ -242,7 +247,7 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 		} else if (is_pure_literal(cnf, *z, -(*z)->name)) {
 			struct literal *f;
 
-			if (!try_set(cnf, mark, -(*z)->name))
+			if (!try_set(cnf, mark, *z, -(*z)->name))
 				return 0;
 
 			f = *z;
@@ -288,7 +293,7 @@ static int sat(struct cnf *cnf, unsigned mark)
 	l->next = cnf->t;
 	cnf->t = l;
 
-	if (try_set(cnf, mark, l->name)) {
+	if (try_set(cnf, mark, l, l->name)) {
 		if (sat(cnf, mark + 1))
 			return 1;
 	}
@@ -301,7 +306,7 @@ static int sat(struct cnf *cnf, unsigned mark)
 	l->next = cnf->f;
 	cnf->f = l;
 
-	if (try_set(cnf, mark, -l->name)) {
+	if (try_set(cnf, mark, l, -l->name)) {
 		if (sat(cnf, mark + 1))
 			return 1;
 	}
