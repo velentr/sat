@@ -356,6 +356,7 @@ static struct literal *remove_zliteral(struct cnf *cnf, int v)
 static int unit_propagate(struct cnf *cnf, unsigned mark)
 {
 	size_t i;
+	int result = -1;
 
 	for (i = 0; i < cnf->nclauses; i++) {
 		struct clause *c = cnf->clauses[i];
@@ -377,6 +378,7 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 		if (!success)
 			return 0;
 
+		result = 1;
 		if (c->literals->val < 0) {
 			struct literal *f;
 
@@ -402,7 +404,7 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 		}
 	}
 
-	return 1;
+	return result;
 }
 
 static int is_pure_literal(struct cnf *cnf, struct literal *l, int val)
@@ -426,6 +428,7 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 {
 	struct literal **z;
 	struct literal **next;
+	int result = -1;
 
 	for (z = &cnf->z, next = z; *next != NULL; z = next) {
 		next = &(*z)->next;
@@ -441,6 +444,8 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 			t->next = cnf->t;
 			t->mark = mark;
 			cnf->t = t;
+
+			result = 1;
 		} else if (is_pure_literal(cnf, *z, -(*z)->name)) {
 			struct literal *f;
 
@@ -453,34 +458,39 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 			f->next = cnf->f;
 			f->mark = mark;
 			cnf->f = f;
+
+			result = 1;
 		}
 	}
 
-	return 1;
+	return result;
 }
 
 static int sat(struct cnf *cnf, unsigned mark)
 {
 	struct literal *l;
 	struct literal *_l;
-
-	if (!unit_propagate(cnf, mark))
-		return 0;
-	if (!eliminate_pure_literals(cnf, mark))
-		return 0;
+	int rc;
 
 	if (satisfied(cnf))
 		return 1;
 	else if (cnf->z == NULL)
 		return 0;
 
-	/*
-	 * we don't want to unwind unit propagation or pure literal elimination
-	 * until this stack frame fails, so use a higher mark for the logic
-	 * below
-	 */
-	mark++;
+	rc = unit_propagate(cnf, mark);
+	if (rc == 1)
+		return sat(cnf, mark + 1);
+	else if (rc == 0)
+		return 0;
 
+	rc = eliminate_pure_literals(cnf, mark);
+	if (rc == 1)
+		return sat(cnf, mark + 1);
+	else if (rc == 0)
+		return 0;
+
+	/* can't unit-propagate or eliminate pure literals---have to guess */
+	assert(cnf->z != NULL);
 	l = cnf->z;
 	cnf->z = l->next;
 	l->mark = mark;
