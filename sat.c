@@ -19,7 +19,6 @@ struct literal {
 };
 
 struct clause {
-	struct clause *next;
 	struct pset *literals;
 	unsigned mark;
 	int sat;
@@ -46,12 +45,12 @@ static void unwind_all(struct cnf *cnf)
 		c = cnf->clauses[i];
 		assert(c != NULL);
 
-		while (c != NULL) {
-			cnf->clauses[i] = c->next;
+		while (c->mark != 0) {
 			pset_refdown(c->literals);
-			free(c);
-			c = cnf->clauses[i];
+			c -= 1;
 		}
+		pset_refdown(c->literals);
+		free(c);
 	}
 }
 
@@ -66,11 +65,9 @@ static void unwind(struct cnf *cnf, unsigned mark)
 		assert(c != NULL);
 
 		while (c->mark >= mark) {
-			assert(c != NULL);
-			cnf->clauses[i] = c->next;
+			cnf->clauses[i] = c - 1;
 			pset_refdown(c->literals);
-			free(c);
-			c = cnf->clauses[i];
+			c -= 1;
 		}
 	}
 
@@ -117,13 +114,8 @@ static int try_set(struct cnf *cnf, unsigned mark, struct literal *l, int name)
 
 		if (pset_contains(c->literals, name)) {
 			/* the clause is satisfied */
-			struct clause *n;
+			struct clause *n = c + 1;
 
-			n = malloc(sizeof(*n));
-			if (n == NULL)
-				err(EXIT_FAILURE, "malloc: clause");
-
-			n->next = c;
 			n->literals = c->literals;
 			pset_refup(c->literals);
 			n->mark = mark;
@@ -139,11 +131,7 @@ static int try_set(struct cnf *cnf, unsigned mark, struct literal *l, int name)
 			if (p == NULL)
 				return 0;
 
-			n = malloc(sizeof(*n));
-			if (n == NULL)
-				err(EXIT_FAILURE, "malloc: clause");
-
-			n->next = c;
+			n = c + 1;
 			n->literals = p;
 			n->mark = mark;
 			n->sat = 0;
@@ -386,6 +374,7 @@ static void append_clause(struct literal *l, size_t c)
 static struct clause *dimacs_clause(FILE *f, struct cnf *cnf, size_t c)
 {
 	struct clause *result;
+	struct clause *expanded;
 
 	result = calloc(1, sizeof(*result));
 	if (result == NULL)
@@ -409,7 +398,12 @@ static struct clause *dimacs_clause(FILE *f, struct cnf *cnf, size_t c)
 			append_clause(&cnf->lbuf[literal - 1], c);
 	}
 
-	return result;
+	expanded = realloc(result,
+			   sizeof(*expanded)*(result->literals->cnt + 1));
+	if (expanded == NULL)
+		err(EXIT_FAILURE, "realloc: clause");
+
+	return expanded;
 }
 
 static struct cnf *dimacs(FILE *f)
