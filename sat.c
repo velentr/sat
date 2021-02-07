@@ -316,9 +316,26 @@ static int sat(struct cnf *cnf, unsigned mark)
 
 static struct cnf *dimacs_header(FILE *f)
 {
+	/*
+	 * TODO: this is pretty hacky, should probably generate a parser with
+	 * ragel or something
+	 */
 	struct cnf *result;
 	unsigned nvars, nclauses;
 	int rc;
+
+	/* parse out comment lines */
+	for (;;) {
+		int c;
+		c = fgetc(f);
+		if (c == 'c') {
+			while (fgetc(f) != '\n')
+				;
+		} else {
+			ungetc(c, f);
+			break;
+		}
+	}
 
 	rc = fscanf(f, " p cnf %u %u ", &nvars, &nclauses);
 	if (rc != 2)
