@@ -36,6 +36,25 @@ struct cnf {
 	/* TODO cache unsatisfied clauses */
 };
 
+static void unwind_all(struct cnf *cnf)
+{
+	size_t i;
+
+	for (i = 0; i < cnf->nclauses; i++) {
+		struct clause *c;
+
+		c = cnf->clauses[i];
+		assert(c != NULL);
+
+		while (c != NULL) {
+			cnf->clauses[i] = c->next;
+			pset_refdown(c->literals);
+			free(c);
+			c = cnf->clauses[i];
+		}
+	}
+}
+
 static void unwind(struct cnf *cnf, unsigned mark)
 {
 	size_t i;
@@ -46,7 +65,8 @@ static void unwind(struct cnf *cnf, unsigned mark)
 		c = cnf->clauses[i];
 		assert(c != NULL);
 
-		while (c != NULL && c->mark >= mark) {
+		while (c->mark >= mark) {
+			assert(c != NULL);
 			cnf->clauses[i] = c->next;
 			pset_refdown(c->literals);
 			free(c);
@@ -490,7 +510,7 @@ int main(int argc, const char * const argv[])
 		rc = EXIT_FAILURE;
 	}
 
-	unwind(cnf, 0);
+	unwind_all(cnf);
 
 	for (i = 0; i < cnf->nvars; i++)
 		free(cnf->lbuf[i].clauses);
