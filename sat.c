@@ -16,8 +16,10 @@
 	(str *)(((char *)p) - offsetof(str, elt))
 
 struct literal {
-	struct dl dl;
-	struct literal *next; /* only for cnf->{t,f} */
+	union {
+		struct dl dl;
+		struct literal *next;
+	} elt;
 	size_t *clauses;
 	size_t nclauses;
 	unsigned mark;
@@ -78,14 +80,14 @@ static void unwind(struct cnf *cnf, unsigned mark)
 	}
 
 	while (cnf->f != NULL && cnf->f->mark >= mark) {
-		struct literal *f = cnf->f->next;
-		list_insert(&cnf->z, &cnf->f->dl);
+		struct literal *f = cnf->f->elt.next;
+		list_insert(&cnf->z, &cnf->f->elt.dl);
 		cnf->f = f;
 	}
 
 	while (cnf->t != NULL && cnf->t->mark >= mark) {
-		struct literal *t = cnf->t->next;
-		list_insert(&cnf->z, &cnf->t->dl);
+		struct literal *t = cnf->t->elt.next;
+		list_insert(&cnf->z, &cnf->t->elt.dl);
 		cnf->t = t;
 	}
 }
@@ -154,7 +156,7 @@ static struct literal *remove_zliteral(struct cnf *cnf, int v)
 	assert(v > 0);
 
 	l = &cnf->lbuf[v-1];
-	list_remove(&l->dl);
+	list_remove(&l->elt.dl);
 	return l;
 }
 
@@ -193,7 +195,7 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 			assert(f->name == -c->literals->val);
 
 			f->mark = mark;
-			f->next = cnf->f;
+			f->elt.next = cnf->f;
 			cnf->f = f;
 		} else {
 			struct literal *t;
@@ -204,7 +206,7 @@ static int unit_propagate(struct cnf *cnf, unsigned mark)
 			assert(t->name == c->literals->val);
 
 			t->mark = mark;
-			t->next = cnf->t;
+			t->elt.next = cnf->t;
 			cnf->t = t;
 		}
 	}
@@ -231,49 +233,36 @@ static int is_pure_literal(struct cnf *cnf, struct literal *l, int val)
 
 static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 {
-	struct literal *pure;
-	struct literal *next;
+	struct dl *next;
 	struct dl *i;
 	int result = -1;
 
-	pure = NULL;
-	for (i = list_start(&cnf->z); i != list_end(&cnf->z); i = i->next) {
-		struct literal *l = containerof(i, struct literal, dl);
+	for (i = list_start(&cnf->z); i != list_end(&cnf->z); i = next) {
+		struct literal *l = containerof(i, struct literal, elt);
+
+		next = i->next;
+
 		if (is_pure_literal(cnf, l, l->name)) {
-			l->mark = 1;
-			l->next = pure;
-			pure = l;
-		} else if (is_pure_literal(cnf, l, l->name)) {
-			l->mark = 0;
-			l->next = pure;
-			pure = l;
-		}
-	}
-
-	while (pure != NULL) {
-		next = pure->next;
-		if (pure->mark) {
-			if (!try_set(cnf, mark, pure, pure->name))
+			if (!try_set(cnf, mark, l, l->name))
 				return 0;
 
-			list_remove(&pure->dl);
-			pure->mark = mark;
-			pure->next = cnf->t;
-			cnf->t = pure;
+			list_remove(&l->elt.dl);
+			l->mark = mark;
+			l->elt.next = cnf->t;
+			cnf->t = l;
 
 			result = 1;
-		} else {
-			if (!try_set(cnf, mark, pure, -pure->name))
+		} else if (is_pure_literal(cnf, l, -l->name)) {
+			if (!try_set(cnf, mark, l, l->name))
 				return 0;
 
-			list_remove(&pure->dl);
-			pure->mark = mark;
-			pure->next = cnf->f;
-			cnf->f = pure;
+			list_remove(&l->elt.dl);
+			l->mark = mark;
+			l->elt.next = cnf->f;
+			cnf->f = l;
 
 			result = 1;
 		}
-		pure = next;
 	}
 
 	return result;
@@ -303,13 +292,13 @@ static int sat(struct cnf *cnf, unsigned mark)
 
 	/* can't unit-propagate or eliminate pure literals---have to guess */
 	assert(!list_empty(&cnf->z));
-	l = containerof(list_start(&cnf->z), struct literal, dl);
-	list_remove(&l->dl);
+	l = containerof(list_start(&cnf->z), struct literal, elt);
+	list_remove(&l->elt.dl);
 	l->mark = mark;
 	assert(l->name > 0);
 
 	/* first, try setting to 'true' */
-	l->next = cnf->t;
+	l->elt.next = cnf->t;
 	cnf->t = l;
 
 	if (try_set(cnf, mark, l, l->name)) {
@@ -317,11 +306,11 @@ static int sat(struct cnf *cnf, unsigned mark)
 			return 1;
 	}
 	unwind(cnf, mark);
-	list_remove(&l->dl);
+	list_remove(&l->elt.dl);
 
 	/* next, try setting to 'false' */
 	l->mark = mark;
-	l->next = cnf->f;
+	l->elt.next = cnf->f;
 	cnf->f = l;
 
 	if (try_set(cnf, mark, l, -l->name)) {
@@ -432,8 +421,7 @@ static struct cnf *dimacs(FILE *f)
 		struct literal *l = result->lbuf + i;
 		l->mark = 0;
 		l->name = i + 1;
-		l->next = NULL;
-		list_insert(&result->z, &l->dl);
+		list_insert(&result->z, &l->elt.dl);
 	}
 
 	for (i = 0; i < result->nclauses; i++)
@@ -446,7 +434,7 @@ static void print_list(const struct literal *l)
 {
 	const struct literal *i;
 
-	for (i = l; i != NULL; i = i->next) {
+	for (i = l; i != NULL; i = i->elt.next) {
 		printf("  %d\n", i->name);
 	}
 }
