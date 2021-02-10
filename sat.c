@@ -2,11 +2,17 @@
 #include <assert.h>
 #include <err.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 
+#include "dlist.c"
+
 #define UNUSED(x) (void)(x)
+
+#define containerof(p, str, elt) \
+	(str *)(((char *)p) - offsetof(str, elt))
 
 struct pset {
 	struct pset *left;
@@ -200,7 +206,8 @@ static int pset_contains(const struct pset *pset, int val)
 }
 
 struct literal {
-	struct literal *next;
+	struct dl dl;
+	struct literal *next; /* only for cnf->{t,f} */
 	size_t *clauses;
 	size_t nclauses;
 	unsigned mark;
@@ -214,8 +221,8 @@ struct clause {
 };
 
 struct cnf {
+	struct list z;
 	struct literal *lbuf;
-	struct literal *z;
 	struct literal *t;
 	struct literal *f;
 	size_t nvars;
@@ -262,15 +269,13 @@ static void unwind(struct cnf *cnf, unsigned mark)
 
 	while (cnf->f != NULL && cnf->f->mark >= mark) {
 		struct literal *f = cnf->f->next;
-		cnf->f->next = cnf->z;
-		cnf->z = cnf->f;
+		list_insert(&cnf->z, &cnf->f->dl);
 		cnf->f = f;
 	}
 
 	while (cnf->t != NULL && cnf->t->mark >= mark) {
 		struct literal *t = cnf->t->next;
-		cnf->t->next = cnf->z;
-		cnf->z = cnf->t;
+		list_insert(&cnf->z, &cnf->t->dl);
 		cnf->t = t;
 	}
 }
@@ -333,24 +338,14 @@ static int try_set(struct cnf *cnf, unsigned mark, struct literal *l, int name)
 
 static struct literal *remove_zliteral(struct cnf *cnf, int v)
 {
-	struct literal **l;
-	struct literal *res;
+	struct literal *l;
 
-	assert(cnf->z != NULL);
-	assert(v >= 0);
+	assert(!list_empty(&cnf->z));
+	assert(v > 0);
 
-	for (l = &cnf->z; *l != NULL; l = &((*l)->next)) {
-		if ((*l)->name != v)
-			continue;
-
-		res = *l;
-		*l = res->next;
-		return res;
-	}
-
-	/* couldn't find literal? */
-	assert(0);
-	return NULL;
+	l = &cnf->lbuf[v-1];
+	list_remove(&l->dl);
+	return l;
 }
 
 static int unit_propagate(struct cnf *cnf, unsigned mark)
@@ -426,41 +421,49 @@ static int is_pure_literal(struct cnf *cnf, struct literal *l, int val)
 
 static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 {
-	struct literal **z;
-	struct literal **next;
+	struct literal *pure;
+	struct literal *next;
+	struct dl *i;
 	int result = -1;
 
-	for (z = &cnf->z, next = z; *next != NULL; z = next) {
-		next = &(*z)->next;
-		if (is_pure_literal(cnf, *z, (*z)->name)) {
-			struct literal *t;
+	pure = NULL;
+	for (i = list_start(&cnf->z); i != list_end(&cnf->z); i = i->next) {
+		struct literal *l = containerof(i, struct literal, dl);
+		if (is_pure_literal(cnf, l, l->name)) {
+			l->mark = 1;
+			l->next = pure;
+			pure = l;
+		} else if (is_pure_literal(cnf, l, l->name)) {
+			l->mark = 0;
+			l->next = pure;
+			pure = l;
+		}
+	}
 
-			if (!try_set(cnf, mark, *z, (*z)->name))
+	while (pure != NULL) {
+		next = pure->next;
+		if (pure->mark) {
+			if (!try_set(cnf, mark, pure, pure->name))
 				return 0;
 
-			t = *z;
-			*z = t->next;
-			next = z;
-			t->next = cnf->t;
-			t->mark = mark;
-			cnf->t = t;
+			list_remove(&pure->dl);
+			pure->mark = mark;
+			pure->next = cnf->t;
+			cnf->t = pure;
 
 			result = 1;
-		} else if (is_pure_literal(cnf, *z, -(*z)->name)) {
-			struct literal *f;
-
-			if (!try_set(cnf, mark, *z, -(*z)->name))
+		} else {
+			if (!try_set(cnf, mark, pure, -pure->name))
 				return 0;
 
-			f = *z;
-			*z = f->next;
-			next = z;
-			f->next = cnf->f;
-			f->mark = mark;
-			cnf->f = f;
+			list_remove(&pure->dl);
+			pure->mark = mark;
+			pure->next = cnf->f;
+			cnf->f = pure;
 
 			result = 1;
 		}
+		pure = next;
 	}
 
 	return result;
@@ -469,12 +472,11 @@ static int eliminate_pure_literals(struct cnf *cnf, unsigned mark)
 static int sat(struct cnf *cnf, unsigned mark)
 {
 	struct literal *l;
-	struct literal *_l;
 	int rc;
 
 	if (satisfied(cnf))
 		return 1;
-	else if (cnf->z == NULL)
+	else if (list_empty(&cnf->z))
 		return 0;
 
 	rc = unit_propagate(cnf, mark);
@@ -490,11 +492,11 @@ static int sat(struct cnf *cnf, unsigned mark)
 		return 0;
 
 	/* can't unit-propagate or eliminate pure literals---have to guess */
-	assert(cnf->z != NULL);
-	l = cnf->z;
-	cnf->z = l->next;
+	assert(!list_empty(&cnf->z));
+	l = containerof(list_start(&cnf->z), struct literal, dl);
+	list_remove(&l->dl);
 	l->mark = mark;
-	assert(l->name >= 0);
+	assert(l->name > 0);
 
 	/* first, try setting to 'true' */
 	l->next = cnf->t;
@@ -505,8 +507,7 @@ static int sat(struct cnf *cnf, unsigned mark)
 			return 1;
 	}
 	unwind(cnf, mark);
-	_l = remove_zliteral(cnf, l->name);
-	assert(_l == l);
+	list_remove(&l->dl);
 
 	/* next, try setting to 'false' */
 	l->mark = mark;
@@ -554,6 +555,7 @@ static struct cnf *dimacs_header(FILE *f)
 
 	result->nvars = nvars;
 	result->nclauses = nclauses;
+	list_init(&result->z);
 
 	return result;
 }
@@ -618,10 +620,10 @@ static struct cnf *dimacs(FILE *f)
 
 	for (i = 0; i < result->nvars; i++) {
 		struct literal *l = result->lbuf + i;
-		l->next = result->z;
 		l->mark = 0;
 		l->name = i + 1;
-		result->z = l;
+		l->next = NULL;
+		list_insert(&result->z, &l->dl);
 	}
 
 	for (i = 0; i < result->nclauses; i++)
@@ -690,10 +692,6 @@ int main(int argc, const char * const argv[])
 		if (cnf->f != NULL) {
 			printf("false:\n");
 			print_list(cnf->f);
-		}
-		if (cnf->z != NULL) {
-			printf("don't care:\n");
-			print_list(cnf->z);
 		}
 		rc = EXIT_SUCCESS;
 	} else {
