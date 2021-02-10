@@ -430,13 +430,12 @@ static struct cnf *dimacs(FILE *f)
 	return result;
 }
 
-static void print_list(const struct literal *l)
+static void print_list(const struct literal *l, int polarity)
 {
 	const struct literal *i;
 
-	for (i = l; i != NULL; i = i->elt.next) {
-		printf("  %d\n", i->name);
-	}
+	for (i = l; i != NULL; i = i->elt.next)
+		printf("  %d\n", polarity * i->name);
 }
 
 static void usage(const char *prog)
@@ -482,20 +481,14 @@ int main(int argc, const char * const argv[])
 
 	issat = sat(cnf, 1);
 	if (issat) {
-		printf("satisfied!\n\n");
-		if (cnf->t != NULL) {
-			printf("true:\n");
-			print_list(cnf->t);
-		}
-		if (cnf->f != NULL) {
-			printf("false:\n");
-			print_list(cnf->f);
-		}
+		if (cnf->t != NULL)
+			print_list(cnf->t, 1);
+		if (cnf->f != NULL)
+			print_list(cnf->f, -1);
 		rc = EXIT_SUCCESS;
 	} else {
 		assert(cnf->f == NULL);
 		assert(cnf->t == NULL);
-		printf("unsatisfied\n");
 		rc = EXIT_FAILURE;
 	}
 
